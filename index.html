@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Face attendance</title>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@400;600;700&display=swap" rel="stylesheet" />
+<style>
+  :root { --paper:#f4f6f3; --ink:#14302a; --moss:#2f6f5e; --mint:#d6ece2; --signal:#e39a2d; --alert:#b4412f; }
+  * { box-sizing: border-box; }
+  body { margin:0; min-height:100dvh; background:var(--paper); color:var(--ink); font-family:"Bricolage Grotesque",system-ui,sans-serif; }
+  header { display:flex; justify-content:space-between; align-items:center; padding:16px 20px; }
+  header b { font-size:1.15rem; }
+  button { font:inherit; font-weight:600; cursor:pointer; border-radius:999px; padding:12px 24px; border:2px solid var(--ink); background:var(--ink); color:var(--paper); }
+  button.ghost { background:transparent; color:var(--ink); padding:8px 20px; }
+  button.link { background:none; border:0; color:var(--moss); text-decoration:underline; text-underline-offset:4px; padding:8px; }
+  button:disabled { opacity:.5; cursor:default; }
+  button:focus-visible, input:focus-visible { outline:3px solid var(--signal); outline-offset:2px; }
+  main { max-width:28rem; margin:0 auto; padding:16px 24px 40px; display:flex; flex-direction:column; align-items:center; gap:22px; text-align:center; }
+  main.wide { max-width:56rem; align-items:stretch; text-align:left; }
+  h1 { margin:0; font-size:1.9rem; }
+  .sub { margin:4px 0 0; color:var(--moss); }
+  .frame { position:relative; width:16.5rem; height:22rem; margin:8px; }
+  .frame video { width:100%; height:100%; object-fit:cover; transform:scaleX(-1); border-radius:50%; background:var(--ink); }
+  .frame::before { content:""; position:absolute; inset:-9px; border:4px solid rgba(47,111,94,.3); border-radius:50%; }
+  .frame.scanning::before { border-color:var(--signal); animation:pulse 1.4s ease-in-out infinite; }
+  @keyframes pulse { 0%,100%{opacity:.35} 50%{opacity:1} }
+  @media (prefers-reduced-motion: reduce) { .frame.scanning::before { animation:none; } }
+  @media (min-width:640px) { .frame { width:19.5rem; height:26rem; } }
+  .status { font-size:1.25rem; font-weight:600; margin:0; }
+  .err { color:var(--alert); }
+  .notice { background:var(--mint); color:var(--moss); font-weight:600; padding:10px 16px; border-radius:10px; margin:0; }
+  label { display:flex; flex-direction:column; gap:4px; font-weight:600; text-align:left; font-size:.95rem; }
+  input { font:inherit; padding:11px 14px; border:2px solid rgba(47,111,94,.3); border-radius:12px; background:#fff; width:100%; }
+  form.col { width:100%; display:flex; flex-direction:column; align-items:center; gap:22px; }
+  form.col button { width:100%; padding:16px; font-size:1.1rem; }
+  .tick { width:80px; height:80px; border-radius:50%; background:var(--mint); color:var(--moss); display:grid; place-items:center; font-size:2.4rem; }
+  .big { font-size:2.8rem; line-height:1.1; margin:4px 0 0; font-weight:700; }
+  .filters { display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end; }
+  .filters label { width:auto; }
+  .filters input { width:auto; }
+  .tablewrap { overflow-x:auto; background:#fff; border:2px solid rgba(47,111,94,.2); border-radius:16px; }
+  table { width:100%; min-width:420px; border-collapse:collapse; }
+  th { background:var(--mint); color:var(--moss); text-align:left; }
+  th, td { padding:12px 16px; }
+  td { border-top:1px solid rgba(47,111,94,.12); }
+  .pad { padding:16px; margin:0; color:var(--moss); }
+</style>
+</head>
+<body>
+<header><b>Face attendance</b><button id="navbtn" class="ghost" hidden></button></header>
+<main id="app"></main>
+
+<script>
+// ====== CONFIG: point this at your backend ======
+const API = "http://localhost:8000";
+// POST /recognize  (multipart: image)         -> { recognized, name, role: "admin"|"user", token }
+// POST /register   (multipart: name, images)  -> 200, or 409 if already registered
+// GET  /admin/attendance?user=&date=  (Bearer) -> { records: [{ id, name, timestamp }] } or array
+// =================================================
+
+const $ = (s) => document.querySelector(s);
+const app = $("#app");
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+let nav = 0, stream = null, video = null;
+
+async function api(path, opts = {}) {
+  let res;
+  try { res = await fetch(API + path, opts); }
+  catch { throw new Error("Can't reach the server. Check your connection and try again."); }
+  let data = null;
+  try { data = await res.json(); } catch {}
+  if (!res.ok) { const e = new Error(data?.message || data?.detail || `Request failed (${res.status})`); e.status = res.status; throw e; }
+  return data;
+}
+const recognize = (blob) => { const f = new FormData(); f.append("image", blob, "face.jpg"); return api("/recognize", { method: "POST", body: f }); };
+const register = (name, blobs) => { const f = new FormData(); f.append("name", name); blobs.forEach((b, i) => f.append("images", b, `face${i}.jpg`)); return api("/register", { method: "POST", body: f }); };
+
+// ---- camera ----
+function stopCam() { stream?.getTracks().forEach((t) => t.stop()); stream = null; video = null; }
+async function startCam(v) {
+  if (!navigator.mediaDevices?.getUserMedia) throw new Error("Camera needs HTTPS (or localhost) and a supported browser.");
+  let s;
+  try { s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user", width: { ideal: 640 } }, audio: false }); }
+  catch { throw new Error("Camera access is blocked. Allow camera permission in your browser, then reload."); }
+  if (!v.isConnected) { s.getTracks().forEach((t) => t.stop()); throw new Error("cancelled"); }
+  stream = s; video = v; v.srcObject = s; await v.play();
+}
+function capture() {
+  return new Promise((res) => {
+    const c = document.createElement("canvas");
+    c.width = video.videoWidth; c.height = video.videoHeight;
+    c.getContext("2d").drawImage(video, 0, 0);
+    c.toBlob(res, "image/jpeg", 0.9);
+  });
+}
+
+// ---- shared ----
+function setNav(label, fn) {
+  const b = $("#navbtn");
+  b.hidden = !label;
+  b.textContent = label || "";
+  b.onclick = fn;
+}
+function begin(wide = false) { stopCam(); app.className = wide ? "wide" : ""; return ++nav; }
+
+// ---- scan ----
+async function showScan(notice) {
+  const my = begin();
+  setNav("Register", () => showRegister(false));
+  app.innerHTML = `${notice ? `<p class="notice">${esc(notice)}</p>` : ""}
+    <div class="frame"><video playsinline muted></video></div>
+    <p class="status" id="msg" aria-live="polite">Starting camera…</p>`;
+  const msg = (t, cls = "status") => { $("#msg").textContent = t; $("#msg").className = cls; };
+  try { await startCam($("video")); }
+  catch (e) { if (my === nav) msg(e.message, "status err"); return; }
+  if (my !== nav) return;
+  $(".frame").classList.add("scanning");
+  for (let n = 1; n <= 2; n++) {
+    msg(n === 1 ? "Scanning your face…" : "No match. Trying once more…");
+    await sleep(1500);
+    if (my !== nav) return;
+    try {
+      const r = await recognize(await capture());
+      if (my !== nav) return;
+      if (r.recognized) return showWelcome(r);
+    } catch (e) {
+      if (my !== nav) return;
+      $(".frame").classList.remove("scanning");
+      $("#msg").className = "status err";
+      $("#msg").innerHTML = `${esc(e.message)}<br><br><button id="retry">Try again</button>`;
+      $("#retry").onclick = () => showScan(notice);
+      return;
+    }
+  }
+  if (my === nav) showRegister(true);
+}
+
+// ---- register ----
+async function showRegister(notFound) {
+  const my = begin();
+  setNav("Scan face", () => showScan());
+  app.innerHTML = `<div><h1>Register your face</h1>
+      <p class="sub">${notFound ? "We couldn't recognise you. Register to get started." : "Enter your name and face the camera."}</p></div>
+    <div class="frame"><video playsinline muted></video></div>
+    <p class="status err" id="camerr" hidden></p>
+    <form class="col" id="form">
+      <label style="width:100%">Full name<input id="name" autocomplete="name" placeholder="e.g. Priya Sharma" /></label>
+      <p class="err" id="err" role="alert" style="margin:0"></p>
+      <button id="go" disabled>Capture and register</button>
+    </form>`;
+  try { await startCam($("video")); $("#go").disabled = false; }
+  catch (e) { if (my === nav) { $("#camerr").hidden = false; $("#camerr").textContent = e.message; } return; }
+  $("#form").onsubmit = async (ev) => {
+    ev.preventDefault();
+    const name = $("#name").value.trim();
+    if (!name) return ($("#err").textContent = "Enter your name.");
+    $("#go").disabled = true; $("#go").textContent = "Registering…"; $("#err").textContent = "";
+    try {
+      const shots = [];
+      for (let i = 0; i < 3; i++) { shots.push(await capture()); await sleep(400); }
+      await register(name, shots);
+      showScan("Registered. Look at the camera to log in and record attendance.");
+    } catch (e) {
+      $("#err").textContent = e.status === 409 ? "This face or name is already registered. Use Scan face to log in." : e.message;
+      $("#go").disabled = false; $("#go").textContent = "Capture and register";
+    }
+  };
+}
+
+// ---- welcome ----
+async function showWelcome(u) {
+  const my = begin();
+  const admin = u.role === "admin";
+  setNav(null);
+  app.innerHTML = `<div class="tick" aria-hidden="true">✓</div>
+    <div><p class="sub">Attendance recorded</p><p class="big">Welcome, ${esc(u.name)}</p></div>
+    ${admin ? `<button id="adm" style="width:100%;padding:16px;font-size:1.1rem">Open attendance dashboard</button>` : ""}
+    <button class="link" id="done"></button>`;
+  if ("speechSynthesis" in window) { speechSynthesis.cancel(); speechSynthesis.speak(new SpeechSynthesisUtterance(`Welcome, ${u.name}`)); }
+  const back = () => { speechSynthesis?.cancel(); showScan(); };
+  $("#done").onclick = back;
+  if (admin) { $("#done").textContent = "Back to scan"; $("#adm").onclick = () => showAdmin(u.token); return; }
+  for (let s = 10; s > 0; s--) {   // kiosk: return to scan automatically
+    $("#done").textContent = `Done (back to scan in ${s}s)`;
+    await sleep(1000);
+    if (my !== nav) return;
+  }
+  back();
+}
+
+// ---- admin ----
+function showAdmin(token) {
+  const my = begin(true);
+  setNav(null);
+  app.innerHTML = `<h1>Attendance</h1>
+    <form class="filters" id="f">
+      <label>User<input id="u" placeholder="Name" /></label>
+      <label>Date<input id="d" type="date" /></label>
+      <button>Apply filters</button>
+      <button type="button" class="link" id="clr">Clear</button>
+    </form>
+    <div class="tablewrap">
+      <table><thead><tr><th>Name</th><th>Date</th><th>Time</th></tr></thead><tbody id="rows"></tbody></table>
+      <p class="pad" id="info">Loading records…</p>
+    </div>
+    <div><button class="link" id="out">Sign out</button></div>`;
+  async function load(ev) {
+    ev?.preventDefault();
+    $("#rows").innerHTML = ""; $("#info").className = "pad"; $("#info").textContent = "Loading records…";
+    const p = new URLSearchParams();
+    if ($("#u").value.trim()) p.set("user", $("#u").value.trim());
+    if ($("#d").value) p.set("date", $("#d").value);
+    try {
+      const data = await api(`/admin/attendance?${p}`, { headers: { Authorization: `Bearer ${token}` } });
+      if (my !== nav) return;
+      const rows = Array.isArray(data) ? data : data.records || [];
+      $("#rows").innerHTML = rows.map((r) => {
+        const d = new Date(r.timestamp), ok = !isNaN(d);
+        return `<tr><td><b>${esc(r.name)}</b></td><td>${ok ? d.toLocaleDateString() : esc(r.timestamp)}</td><td>${ok ? d.toLocaleTimeString() : ""}</td></tr>`;
+      }).join("");
+      $("#info").textContent = rows.length ? "" : "No attendance records match these filters.";
+    } catch (e) {
+      if (my !== nav) return;
+      $("#info").className = "pad err";
+      $("#info").textContent = e.status === 401 || e.status === 403 ? "Your admin session isn't valid. Scan your face again to sign in." : e.message;
+    }
+  }
+  $("#f").onsubmit = load;
+  $("#clr").onclick = () => { $("#u").value = ""; $("#d").value = ""; load(); };
+  $("#out").onclick = () => showScan();
+  load();
+}
+
+showScan();
+</script>
+</body>
+</html>
