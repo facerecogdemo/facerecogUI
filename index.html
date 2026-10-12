@@ -52,8 +52,9 @@
 <main id="app"></main>
 
 <script>
+  window.FACE_API_URL = "https://facerecog-7axc.onrender.com";
 // ====== CONFIG: point this at your backend ======
-const API = "";
+const API = window.FACE_API_URL;
 // POST /recognize  (multipart: image)         -> { recognized, name, role: "admin"|"user", token }
 // POST /register   (multipart: name, images)  -> 200, or 409 if already registered
 // GET  /admin/attendance?user=&date=  (Bearer) -> { records: [{ id, name, timestamp }] } or array
