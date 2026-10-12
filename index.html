@@ -53,7 +53,7 @@
 
 <script>
 // ====== CONFIG: point this at your backend ======
-const API = "http://localhost:8000";
+const API = "";
 // POST /recognize  (multipart: image)         -> { recognized, name, role: "admin"|"user", token }
 // POST /register   (multipart: name, images)  -> 200, or 409 if already registered
 // GET  /admin/attendance?user=&date=  (Bearer) -> { records: [{ id, name, timestamp }] } or array
@@ -68,7 +68,7 @@ let currentSessionId = null;
 
 async function api(path, opts = {}) {
   let res;
-  try { res = await fetch(API + path, opts); }
+  try { res = await fetch(`${API}${path}`, opts); }
   catch { throw new Error("Can't reach the server. Check your connection and try again."); }
   let data = null;
   try { data = await res.json(); } catch {}
