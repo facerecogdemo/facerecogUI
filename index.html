@@ -136,9 +136,9 @@ async function showScan(notice) {
       
       if (r.status === "success") {
           if (r.role === "admin" && r.token) {
-              showAdmin(r.token);
+              return showAdminWelcome(r, r.token);
           } else {
-              showWelcome(r);
+              return showWelcome(r);
           }
       }
       
@@ -242,11 +242,56 @@ async function showWelcome(u) {
   if (my === nav) showScan();
 }
 
-// ---- admin ----
-
-function showAdmin(token) {
-  const my = begin(true);
+// ---- admin welcome and menu ----
+function showAdminWelcome(user, token) {
+  const my = begin();
   setNav(null);
+
+  app.innerHTML = `
+    <div class="tick" aria-hidden="true">✓</div>
+    <div>
+      <p class="sub">Admin sign-in successful</p>
+      <p class="big">Welcome, ${esc(user.name)}</p>
+      <p class="sub">Your attendance has been checked. Continue to the admin menu.</p>
+    </div>
+    <button id="continue">Continue to admin menu</button>
+  `;
+
+  if ("speechSynthesis" in window) {
+    speechSynthesis.cancel();
+    speechSynthesis.speak(new SpeechSynthesisUtterance(`Welcome, ${user.name}`));
+  }
+
+  $("#continue").onclick = () => {
+    if ("speechSynthesis" in window) speechSynthesis.cancel();
+    showAdminMenu(token, user.name);
+  };
+}
+
+function showAdminMenu(token, adminName = "Admin") {
+  begin();
+  setNav("Sign out", () => showScan());
+
+  app.innerHTML = `
+    <div>
+      <p class="sub">Administrator</p>
+      <h1>Welcome, ${esc(adminName)}</h1>
+      <p class="sub">What would you like to do?</p>
+    </div>
+    <form class="col" id="adminmenu">
+      <button type="button" id="attendanceBtn">Attendance History</button>
+      <button type="button" id="usersBtn">Manage Users</button>
+    </form>
+  `;
+
+  $("#attendanceBtn").onclick = () => showAdmin(token, adminName);
+  $("#usersBtn").onclick = () => showManageUsers(token, adminName);
+}
+
+// ---- admin: attendance history ----
+function showAdmin(token, adminName = "Admin") {
+  const my = begin(true);
+  setNav("Admin menu", () => showAdminMenu(token, adminName));
 
   // Use the browser's local date, not UTC.
   const today = new Date();
@@ -257,42 +302,21 @@ function showAdmin(token) {
   ].join("-");
 
   app.innerHTML = `
-    <h1>Attendance</h1>
+    <h1>Attendance History</h1>
     <form class="filters" id="f">
-      <label>
-        User
-        <input id="u" placeholder="Name" />
-      </label>
-      <label>
-        Date
-        <input id="d" type="date" value="${localToday}" />
-      </label>
+      <label>User<input id="u" placeholder="Name" /></label>
+      <label>Date<input id="d" type="date" value="${localToday}" /></label>
       <button type="submit">Apply filters</button>
       <button type="button" class="link" id="clr">Today</button>
     </form>
-
     <div class="tablewrap">
-      <table>
-        <thead>
-          <tr>
-            <th>Name</th>
-            <th>Date</th>
-            <th>Time</th>
-          </tr>
-        </thead>
-        <tbody id="rows"></tbody>
-      </table>
+      <table><thead><tr><th>Name</th><th>Date</th><th>Time</th></tr></thead><tbody id="rows"></tbody></table>
       <p class="pad" id="info">Loading records…</p>
-    </div>
-
-    <div>
-      <button type="button" class="link" id="out">Sign out</button>
     </div>
   `;
 
   async function load(ev) {
     ev?.preventDefault();
-
     $("#rows").innerHTML = "";
     $("#info").className = "pad";
     $("#info").textContent = "Loading records…";
@@ -300,80 +324,215 @@ function showAdmin(token) {
     const p = new URLSearchParams();
     const user = $("#u").value.trim();
     const selectedDate = $("#d").value;
-
     if (user) p.set("user", user);
     if (selectedDate) p.set("date", selectedDate);
 
     try {
-      const data = await api(
-        `/admin/attendance?${p.toString()}`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`
-          }
-        }
-      );
-
+      const data = await api(`/admin/attendance?${p.toString()}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
       if (my !== nav) return;
-
-      const rows = Array.isArray(data)
-        ? data
-        : data.records || [];
-
+      const rows = Array.isArray(data) ? data : data.records || [];
       $("#rows").innerHTML = rows.map((r) => {
         const timestamp = new Date(r.timestamp);
         const validTimestamp = !Number.isNaN(timestamp.getTime());
-
-        const attendanceDate = r.date
-          ? esc(r.date)
-          : validTimestamp
-            ? timestamp.toLocaleDateString()
-            : "—";
-
-        const attendanceTime = validTimestamp
-          ? timestamp.toLocaleTimeString()
-          : "—";
-
-        return `
-          <tr>
-            <td><b>${esc(r.name)}</b></td>
-            <td>${attendanceDate}</td>
-            <td>${esc(attendanceTime)}</td>
-          </tr>
-        `;
+        const attendanceDate = r.date ? esc(r.date) : (validTimestamp ? timestamp.toLocaleDateString() : "—");
+        const attendanceTime = validTimestamp ? timestamp.toLocaleTimeString() : "—";
+        return `<tr><td><b>${esc(r.name)}</b></td><td>${attendanceDate}</td><td>${esc(attendanceTime)}</td></tr>`;
       }).join("");
-
-      $("#info").textContent = rows.length
-        ? ""
-        : "No attendance records match these filters.";
+      $("#info").textContent = rows.length ? "" : "No attendance records match these filters.";
     } catch (e) {
       if (my !== nav) return;
-
       $("#info").className = "pad err";
-
-      if (e.status === 401 || e.status === 403) {
-        $("#info").textContent =
-          "Your admin session isn't valid. Scan your face again to sign in.";
-      } else {
-        $("#info").textContent =
-          e.message || "Unable to load attendance records.";
-      }
+      $("#info").textContent = e.status === 401 || e.status === 403
+        ? "Your admin session isn't valid. Scan your face again to sign in."
+        : (e.message || "Unable to load attendance records.");
     }
   }
 
   $("#f").onsubmit = load;
-
   $("#clr").onclick = () => {
     $("#u").value = "";
     $("#d").value = localToday;
     load();
   };
+  load();
+}
 
-  $("#out").onclick = () => {
-    showScan();
+// ---- admin: manage users ----
+function showManageUsers(token, adminName = "Admin") {
+  const my = begin(true);
+  setNav("Admin menu", () => showAdminMenu(token, adminName));
+
+  app.innerHTML = `
+    <h1>Manage Users</h1>
+    <p class="sub">Register a person using 3–5 clear face images, update access, or remove an account.</p>
+
+    <section style="margin:20px 0">
+      <h2>Add user</h2>
+      <form id="addUserForm" class="col" style="align-items:stretch">
+        <label>Full name<input id="newName" name="name" autocomplete="name" required maxlength="120" placeholder="Full name" /></label>
+        <label>Role
+          <select id="newRole" name="role" style="font:inherit;padding:11px 14px;border:2px solid rgba(47,111,94,.3);border-radius:12px;background:#fff">
+            <option value="user">User</option>
+            <option value="admin">Admin</option>
+          </select>
+        </label>
+        <label>Face images (choose 3–5)
+          <input id="newImages" name="images" type="file" accept="image/jpeg,image/png,image/webp" multiple required />
+        </label>
+        <p id="addInfo" class="pad" role="status"></p>
+        <button id="addBtn" type="submit">Register user</button>
+      </form>
+    </section>
+
+    <section style="margin:20px 0">
+      <h2>Registered users</h2>
+      <button type="button" class="ghost" id="refreshUsers">Refresh list</button>
+      <div class="tablewrap" style="margin-top:12px">
+        <table style="min-width:760px">
+          <thead><tr><th>Name</th><th>Role</th><th>Status</th><th>Actions</th></tr></thead>
+          <tbody id="userRows"></tbody>
+        </table>
+        <p class="pad" id="userInfo">Loading users…</p>
+      </div>
+    </section>
+  `;
+
+  async function loadUsers() {
+    $("#userRows").innerHTML = "";
+    $("#userInfo").className = "pad";
+    $("#userInfo").textContent = "Loading users…";
+    try {
+      const data = await api("/admin/users", {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (my !== nav) return;
+      const users = data.users || [];
+      $("#userRows").innerHTML = users.map((u) => `
+        <tr>
+          <td><b>${esc(u.name)}</b><br><small>ID: ${esc(u.id)}</small></td>
+          <td>
+            <select data-role-id="${esc(u.id)}" aria-label="Role for ${esc(u.name)}" style="font:inherit;padding:6px;border-radius:8px">
+              <option value="user" ${u.role === "user" ? "selected" : ""}>User</option>
+              <option value="admin" ${u.role === "admin" ? "selected" : ""}>Admin</option>
+            </select>
+            <button type="button" class="link" data-save-role="${esc(u.id)}">Save role</button>
+          </td>
+          <td>${u.is_active ? "Active" : "Inactive"}</td>
+          <td>
+            <button type="button" class="link" data-status-id="${esc(u.id)}" data-active="${u.is_active ? "true" : "false"}">${u.is_active ? "Deactivate" : "Reactivate"}</button>
+            <button type="button" class="link" data-delete-id="${esc(u.id)}">Delete</button>
+          </td>
+        </tr>
+      `).join("");
+      $("#userInfo").textContent = users.length ? "" : "No users found.";
+
+      document.querySelectorAll("[data-save-role]").forEach((button) => {
+        button.onclick = async () => {
+          const id = button.dataset.saveRole;
+          const role = document.querySelector(`[data-role-id="${id}"]`).value;
+          await mutateUser(`/admin/users/${id}/role`, "PATCH", { role }, "Role updated.");
+        };
+      });
+
+      document.querySelectorAll("[data-status-id]").forEach((button) => {
+        button.onclick = async () => {
+          const id = button.dataset.statusId;
+          const is_active = button.dataset.active !== "true";
+          await mutateUser(`/admin/users/${id}/status`, "PATCH", { is_active }, is_active ? "User reactivated." : "User deactivated.");
+        };
+      });
+
+      document.querySelectorAll("[data-delete-id]").forEach((button) => {
+        button.onclick = async () => {
+          const id = button.dataset.deleteId;
+          const user = users.find((u) => String(u.id) === String(id));
+          if (!confirm(`Permanently delete ${user?.name || "this user"}? This also deletes their attendance history.`)) return;
+          try {
+            await api(`/admin/users/${id}`, {
+              method: "DELETE",
+              headers: { Authorization: `Bearer ${token}` }
+            });
+            await loadUsers();
+          } catch (e) {
+            alert(e.message || "Could not delete user.");
+          }
+        };
+      });
+    } catch (e) {
+      if (my !== nav) return;
+      $("#userInfo").className = "pad err";
+      $("#userInfo").textContent = e.status === 401 || e.status === 403
+        ? "Your admin session isn't valid. Scan your face again to sign in."
+        : (e.message || "Unable to load users.");
+    }
+  }
+
+  async function mutateUser(path, method, body, successMessage) {
+    try {
+      await api(path, {
+        method,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(body)
+      });
+      if (my !== nav) return;
+      $("#userInfo").className = "pad";
+      $("#userInfo").textContent = successMessage;
+      await loadUsers();
+    } catch (e) {
+      if (my !== nav) return;
+      alert(e.message || "The user update failed.");
+    }
+  }
+
+  $("#addUserForm").onsubmit = async (ev) => {
+    ev.preventDefault();
+    const name = $("#newName").value.trim();
+    const files = Array.from($("#newImages").files || []);
+    if (!name) {
+      $("#addInfo").className = "pad err";
+      $("#addInfo").textContent = "Enter a name.";
+      return;
+    }
+    if (files.length < 3 || files.length > 5) {
+      $("#addInfo").className = "pad err";
+      $("#addInfo").textContent = "Choose between 3 and 5 face images.";
+      return;
+    }
+
+    const form = new FormData();
+    form.append("name", name);
+    form.append("role", $("#newRole").value);
+    files.forEach((file) => form.append("images", file));
+    $("#addBtn").disabled = true;
+    $("#addInfo").className = "pad";
+    $("#addInfo").textContent = "Registering user and processing face images…";
+
+    try {
+      await api("/admin/users", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: form
+      });
+      if (my !== nav) return;
+      $("#addUserForm").reset();
+      $("#addInfo").textContent = "User registered successfully.";
+      await loadUsers();
+    } catch (e) {
+      if (my !== nav) return;
+      $("#addInfo").className = "pad err";
+      $("#addInfo").textContent = e.message || "Could not register user.";
+    } finally {
+      $("#addBtn").disabled = false;
+    }
   };
 
-  load();
+  $("#refreshUsers").onclick = loadUsers;
+  loadUsers();
 }
 
 showScan();
