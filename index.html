@@ -135,7 +135,11 @@ async function showScan(notice) {
       if (my !== nav) return;
       
       if (r.status === "success") {
-        return showWelcome(r);
+          if (r.role === "admin" && r.token) {
+              showAdmin(r.token);
+          } else {
+              showWelcome(r);
+          }
       }
       
       if (r.status === "register_required") {
@@ -239,45 +243,136 @@ async function showWelcome(u) {
 }
 
 // ---- admin ----
+
 function showAdmin(token) {
   const my = begin(true);
   setNav(null);
-  app.innerHTML = `<h1>Attendance</h1>
+
+  // Use the browser's local date, not UTC.
+  const today = new Date();
+  const localToday = [
+    today.getFullYear(),
+    String(today.getMonth() + 1).padStart(2, "0"),
+    String(today.getDate()).padStart(2, "0")
+  ].join("-");
+
+  app.innerHTML = `
+    <h1>Attendance</h1>
     <form class="filters" id="f">
-      <label>User<input id="u" placeholder="Name" /></label>
-      <label>Date<input id="d" type="date" /></label>
-      <button>Apply filters</button>
-      <button type="button" class="link" id="clr">Clear</button>
+      <label>
+        User
+        <input id="u" placeholder="Name" />
+      </label>
+      <label>
+        Date
+        <input id="d" type="date" value="${localToday}" />
+      </label>
+      <button type="submit">Apply filters</button>
+      <button type="button" class="link" id="clr">Today</button>
     </form>
+
     <div class="tablewrap">
-      <table><thead><tr><th>Name</th><th>Date</th><th>Time</th></tr></thead><tbody id="rows"></tbody></table>
+      <table>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Date</th>
+            <th>Time</th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
       <p class="pad" id="info">Loading records…</p>
     </div>
-    <div><button class="link" id="out">Sign out</button></div>`;
+
+    <div>
+      <button type="button" class="link" id="out">Sign out</button>
+    </div>
+  `;
+
   async function load(ev) {
     ev?.preventDefault();
-    $("#rows").innerHTML = ""; $("#info").className = "pad"; $("#info").textContent = "Loading records…";
+
+    $("#rows").innerHTML = "";
+    $("#info").className = "pad";
+    $("#info").textContent = "Loading records…";
+
     const p = new URLSearchParams();
-    if ($("#u").value.trim()) p.set("user", $("#u").value.trim());
-    if ($("#d").value) p.set("date", $("#d").value);
+    const user = $("#u").value.trim();
+    const selectedDate = $("#d").value;
+
+    if (user) p.set("user", user);
+    if (selectedDate) p.set("date", selectedDate);
+
     try {
-      const data = await api(`/admin/attendance?${p}`, { headers: { Authorization: `Bearer ${token}` } });
+      const data = await api(
+        `/admin/attendance?${p.toString()}`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
+        }
+      );
+
       if (my !== nav) return;
-      const rows = Array.isArray(data) ? data : data.records || [];
+
+      const rows = Array.isArray(data)
+        ? data
+        : data.records || [];
+
       $("#rows").innerHTML = rows.map((r) => {
-        const d = new Date(r.timestamp), ok = !isNaN(d);
-        return `<tr><td><b>${esc(r.name)}</b></td><td>${ok ? d.toLocaleDateString() : esc(r.timestamp)}</td><td>${ok ? d.toLocaleTimeString() : ""}</td></tr>`;
+        const timestamp = new Date(r.timestamp);
+        const validTimestamp = !Number.isNaN(timestamp.getTime());
+
+        const attendanceDate = r.date
+          ? esc(r.date)
+          : validTimestamp
+            ? timestamp.toLocaleDateString()
+            : "—";
+
+        const attendanceTime = validTimestamp
+          ? timestamp.toLocaleTimeString()
+          : "—";
+
+        return `
+          <tr>
+            <td><b>${esc(r.name)}</b></td>
+            <td>${attendanceDate}</td>
+            <td>${esc(attendanceTime)}</td>
+          </tr>
+        `;
       }).join("");
-      $("#info").textContent = rows.length ? "" : "No attendance records match these filters.";
+
+      $("#info").textContent = rows.length
+        ? ""
+        : "No attendance records match these filters.";
     } catch (e) {
       if (my !== nav) return;
+
       $("#info").className = "pad err";
-      $("#info").textContent = e.status === 401 || e.status === 403 ? "Your admin session isn't valid. Scan your face again to sign in." : e.message;
+
+      if (e.status === 401 || e.status === 403) {
+        $("#info").textContent =
+          "Your admin session isn't valid. Scan your face again to sign in.";
+      } else {
+        $("#info").textContent =
+          e.message || "Unable to load attendance records.";
+      }
     }
   }
+
   $("#f").onsubmit = load;
-  $("#clr").onclick = () => { $("#u").value = ""; $("#d").value = ""; load(); };
-  $("#out").onclick = () => showScan();
+
+  $("#clr").onclick = () => {
+    $("#u").value = "";
+    $("#d").value = localToday;
+    load();
+  };
+
+  $("#out").onclick = () => {
+    showScan();
+  };
+
   load();
 }
 
