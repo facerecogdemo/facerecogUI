@@ -59,13 +59,12 @@ dialog{border-radius:20px;border:3px solid var(--tq);background:var(--card);colo
 textarea{width:100%;min-height:150px;background:var(--bg);border:2px solid var(--line);border-radius:12px;padding:8px}
 .log{font-size:.9rem;color:var(--mut);margin-top:10px}
 [hidden]{display:none!important}
-.cam{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}.err{color:#b4412f;font-weight:700}.btn.c{cursor:pointer}
+.err{color:#b4412f;font-weight:700}.guide.face{width:min(70vw,260px);height:min(70vw,260px);overflow:hidden;padding:0;border-style:solid;animation:none}.guide.face video{width:100%;height:100%;object-fit:cover;transform:scaleX(-1);display:block}.guide.face.scanning{border-color:var(--co);animation:breathe 1.6s ease-in-out infinite}@media (prefers-reduced-motion:reduce){.guide.face.scanning{animation:none}}
 </style></head><body>
 <header>
  <div class="brand">WELCOME HOME<small>Rhema Children Church · Check-in</small></div>
  <div class="row"><button class="btn" id="navbtn" hidden></button><button class="btn" id="exit" hidden>Leave staff area</button></div>
 </header>
-<video id="cam" class="cam" playsinline muted aria-hidden="true"></video>
 <main>
 <section id="kiosk">
  <div class="stage" id="stage">
@@ -101,7 +100,7 @@ textarea{width:100%;min-height:150px;background:var(--bg);border:2px solid var(-
    <button class="btn p" id="uadd">Add user</button>
   </div>
   <div class="tools" id="addbox" hidden style="margin:0 0 12px;text-align:center">
-   <div class="guide" id="aem" aria-hidden="true">📷</div>
+   <div class="guide face" id="aem"><video id="cam" playsinline muted aria-label="Camera preview"></video></div>
    <form id="af" style="display:grid;gap:10px;justify-items:center;margin-top:10px">
     <label>Name<br><input id="an" autocomplete="off"></label>
     <label>Class (optional)<br><input id="ac" autocomplete="off"></label>
@@ -168,12 +167,14 @@ async function api(path,opts={}){let res;try{res=await fetch(API+path,opts)}catc
  if(!res.ok){const e=new Error(d?.message||d?.detail||`Request failed (${res.status})`);e.status=res.status;throw e}return d}
 const recognize=b=>{const f=new FormData();f.append('image',b,'face.jpg');return api('/recognize',{method:'POST',body:f})};
 const register=(n,bs,consent,cls,tok)=>{const f=new FormData();f.append('name',n);f.append('consent',consent);if(cls)f.append('class',cls);bs.forEach((b,i)=>f.append('images',b,`face${i}.jpg`));return api('/register',{method:'POST',body:f,headers:tok?{Authorization:`Bearer ${tok}`}:undefined})};
-// ---- camera (runs hidden: the face is never shown, only emojis) ----
-async function ensureCam(){if(cam)return;
- if(!navigator.mediaDevices?.getUserMedia)throw new Error('The camera needs HTTPS and a modern browser.');
- try{cam=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:640}},audio:false})}
- catch{throw new Error('Please allow the camera so we can say hello!')}
- const v=$('#cam');v.srcObject=cam;await v.play()}
+// ---- camera (live face preview shown in the circle) ----
+async function ensureCam(){
+ if(!cam){
+  if(!navigator.mediaDevices?.getUserMedia)throw new Error('The camera needs HTTPS and a modern browser.');
+  try{cam=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:640}},audio:false})}
+  catch{throw new Error('Please allow the camera so we can say hello!')}
+ }
+ const v=$('#cam');if(v){v.srcObject=cam;await v.play()}}
 function stopCam(){cam?.getTracks().forEach(t=>t.stop());cam=null}
 const snap=()=>new Promise(r=>{const v=$('#cam'),c=document.createElement('canvas');c.width=v.videoWidth;c.height=v.videoHeight;c.getContext('2d').drawImage(v,0,0);c.toBlob(r,'image/jpeg',.9)});
 // ---- kiosk ----
@@ -188,13 +189,13 @@ function say(n,t){const now=Date.now();if(now-lastSpoken<8000)return;lastSpoken=
 
 async function scan(notice){
  const my=begin();busy=false;setNav('Register',()=>registerView(false));$('#klog').textContent='';
- P.innerHTML=`${notice?`<p><span class="status">${esc(notice)}</span></p>`:''}<h1>Welcome <span>home!</span></h1><p>We’re so happy you’re here!</p><div class="guide" id="em" aria-hidden="true">🙂</div><p id="msg"><b>Look at the camera.</b></p><button class="btn" id="help">Ask a helper</button>`;
+ P.innerHTML=`${notice?`<p><span class="status">${esc(notice)}</span></p>`:''}<h1>Welcome <span>home!</span></h1><p>We’re so happy you’re here!</p><div class="guide face" id="em"><video id="cam" playsinline muted aria-label="Camera preview"></video></div><p id="msg"><b>Look at the camera.</b></p><button class="btn" id="help">Ask a helper</button>`;
  $('#help').onclick=helper;
  try{await ensureCam()}catch(e){if(my===run){em('🚫');msg(`<span class="err">${esc(e.message)}</span>`)}return}
- if(my!==run)return;
+ if(my!==run)return;$('#em')?.classList.add('scanning');
  for(let n=1;n<=2;n++){
-  em(n===1?'😀':'🤔');msg(n===1?'<b>Scanning… hold still!</b>':'<b>Let’s try once more…</b>');
-  await sleep(1500);if(my!==run)return;em('📸');
+  msg(n===1?'<b>Scanning… hold still!</b>':'<b>Let’s try once more…</b>');
+  await sleep(1500);if(my!==run)return;
   try{const r=await recognize(await snap());if(my!==run)return;if(r.recognized)return success(r)}
   catch(e){if(my!==run)return;return fail(e)}
  }
@@ -219,7 +220,7 @@ function success(r){
 }
 async function registerView(notFound){
  const my=begin();busy=true;setNav('Scan face',()=>scan());
- P.innerHTML=`<h1>Join the <span>adventure!</span></h1><p>${notFound?'We couldn’t find you yet. Let’s register!':'Tell us your name, then look at the camera.'}</p><div class="guide" id="em" aria-hidden="true">📷</div>
+ P.innerHTML=`<h1>Join the <span>adventure!</span></h1><p>${notFound?'We couldn’t find you yet. Let’s register!':'Tell us your name, then look at the camera.'}</p><div class="guide face" id="em"><video id="cam" playsinline muted aria-label="Camera preview"></video></div>
   <form id="rf" style="display:grid;gap:10px;justify-items:center"><label>Child’s name<br><input id="rn" autocomplete="off" style="width:100%"></label>
   <label style="font-size:.9rem"><input type="checkbox" id="rc"> A parent or guardian agrees to face check-in</label>
   <p class="hint err" id="rerr" role="alert" style="margin:0"></p><button class="btn p" id="rgo" disabled>Capture and register</button></form>`;
@@ -227,17 +228,17 @@ async function registerView(notFound){
  $('#rf').onsubmit=async ev=>{ev.preventDefault();
   const name=$('#rn').value.trim(),err=t=>$('#rerr').textContent=t;
   if(!name)return err('Please enter a name.');if(!$('#rc').checked)return err('A parent or guardian needs to agree first.');
-  err('');$('#rgo').disabled=true;$('#rgo').textContent='Registering…';em('📸');
+  err('');$('#rgo').disabled=true;$('#rgo').textContent='Registering…';
   try{const shots=[];for(let i=0;i<3;i++){shots.push(await snap());await sleep(400)}
    await register(name,shots,true);if(my===run)scan('Registered! Look at the camera so we can check you in.')}
-  catch(e){if(my!==run)return;em('🙂');err(e.status===409?'Already registered. Tap Scan face to check in.':e.message);$('#rgo').disabled=false;$('#rgo').textContent='Capture and register'}
+  catch(e){if(my!==run)return;err(e.status===409?'Already registered. Tap Scan face to check in.':e.message);$('#rgo').disabled=false;$('#rgo').textContent='Capture and register'}
  };
 }
 // ---- admin (only reachable after an admin face is recognised) ----
 let rowsCache=[],shown=[],usersCache=[],deb;
 const H=()=>({Authorization:`Bearer ${token}`});
 const sessionMsg=e=>e.status===401||e.status===403?'Your staff session isn’t valid. Leave the staff area and scan your face again.':e.message;
-function openAdmin(t){token=t;begin();stopCam();setNav(null);$('#kiosk').hidden=true;$('#admin').hidden=false;$('#exit').hidden=false;showTab('att')}
+function openAdmin(t){token=t;begin();stopCam();P.innerHTML='';setNav(null);$('#kiosk').hidden=true;$('#admin').hidden=false;$('#exit').hidden=false;showTab('att')}
 function leaveAdmin(){token=null;closeAdd();$('#admin').hidden=true;$('#exit').hidden=true;$('#kiosk').hidden=false;scan()}
 function showTab(t){
  document.querySelectorAll('[data-tab]').forEach(b=>{const on=b.dataset.tab===t;b.classList.toggle('p',on);b.setAttribute('aria-selected',on)});
@@ -271,17 +272,17 @@ function renderUsers(){
  $('#urows').innerHTML=list.map(u=>{const c=u.created_at||u.registered_at;return `<tr><td><span class="mini" style="background:${colOf(u.name)}">${esc(u.name[0])}</span>${esc(u.name)}</td><td>${esc(u.class||'—')}</td><td>${c?dateOf(c)[0]:'—'}</td><td><button class="btn c" data-del="${esc(u.id)}">Delete</button></td></tr>`}).join('');
  $('#uinfo').className='hint';$('#uinfo').textContent=list.length?'':'No users found.'}
 async function openAdd(){
- $('#addbox').hidden=false;$('#aerr').textContent='';$('#aem').textContent='📷';$('#ago').disabled=true;
- try{await ensureCam();$('#ago').disabled=false}catch(e){$('#aem').textContent='🚫';$('#aerr').textContent=e.message}}
+ $('#addbox').hidden=false;$('#aerr').textContent='';$('#ago').disabled=true;
+ try{await ensureCam();$('#ago').disabled=false}catch(e){$('#aerr').textContent=e.message}}
 function closeAdd(){$('#addbox').hidden=true;$('#af').reset();stopCam()}
 $('#uadd').onclick=openAdd;$('#acancel').onclick=closeAdd;
 $('#af').onsubmit=async ev=>{ev.preventDefault();
  const name=$('#an').value.trim(),err=t=>$('#aerr').textContent=t;
  if(!name)return err('Please enter a name.');if(!$('#acn').checked)return err('A parent or guardian needs to agree first.');
- err('');$('#ago').disabled=true;$('#ago').textContent='Adding…';$('#aem').textContent='📸';
+ err('');$('#ago').disabled=true;$('#ago').textContent='Adding…';
  try{const shots=[];for(let i=0;i<3;i++){shots.push(await snap());await sleep(400)}
   await register(name,shots,true,$('#ac').value.trim(),token);closeAdd();loadUsers()}
- catch(e){$('#aem').textContent='🙂';err(e.status===409?'This person is already registered.':sessionMsg(e))}
+ catch(e){err(e.status===409?'This person is already registered.':sessionMsg(e))}
  finally{$('#ago').disabled=false;$('#ago').textContent='Capture and add'}};
 $('#uq').oninput=renderUsers;
 
