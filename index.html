@@ -164,9 +164,10 @@ function celebrateOld(){if($('body').classList.contains('calm')||matchMedia('(pr
 // ---- API ----
 async function api(path,opts={}){let res;try{res=await fetch(API+path,opts)}catch{throw new Error('Can’t reach the server.')}
  let d=null;try{d=await res.json()}catch{}
- if(!res.ok){const e=new Error(d?.message||d?.detail||`Request failed (${res.status})`);e.status=res.status;throw e}return d}
+ if(!res.ok){const dt=d?.detail,txt=Array.isArray(dt)?dt.map(x=>`${(x.loc||[]).join('.')}: ${x.msg}`).join('; '):(typeof dt==='string'?dt:null);
+  console.error(path,res.status,d);const e=new Error(d?.message||txt||`Request failed (${res.status})`);e.status=res.status;throw e}return d}
 // /recognize schema: image (string), session_id (string). If your backend wants a real file instead, set IMAGE_AS='file'.
-const IMAGE_AS='base64';
+const IMAGE_AS='file';
 const b64=b=>new Promise(r=>{const f=new FileReader();f.onload=()=>r(f.result.split(',')[1]);f.readAsDataURL(b)});
 const putImg=async(f,k,b)=>{if(IMAGE_AS==='file')f.append(k,b,'face.jpg');else f.append(k,await b64(b))};
 const newId=()=>crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random().toString(36).slice(2);
