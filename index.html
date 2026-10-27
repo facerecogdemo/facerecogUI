@@ -104,12 +104,13 @@ textarea{width:100%;min-height:150px;background:var(--bg);border:2px solid var(-
    <form id="af" style="display:grid;gap:10px;justify-items:center;margin-top:10px">
     <label>Name<br><input id="an" autocomplete="off"></label>
     <label>Class (optional)<br><input id="ac" autocomplete="off"></label>
+    <label>Role<br><select id="ar"><option value="user">User</option><option value="admin">Admin</option></select></label>
     <label style="font-size:.9rem"><input type="checkbox" id="acn"> A parent or guardian agrees to face check-in</label>
     <p class="hint err" id="aerr" role="alert" style="margin:0"></p>
     <div class="row"><button class="btn p" id="ago" disabled>Capture and add</button><button type="button" class="btn" id="acancel">Cancel</button></div>
    </form>
   </div>
-  <div class="tw"><table><thead><tr><th>User</th><th>Class</th><th>Registered</th><th>Action</th></tr></thead><tbody id="urows"></tbody></table><p class="hint" id="uinfo" style="padding:10px 12px;margin:0"></p></div>
+  <div class="tw"><table><thead><tr><th>User</th><th>Class</th><th>Registered</th><th>Role</th><th>Action</th></tr></thead><tbody id="urows"></tbody></table><p class="hint" id="uinfo" style="padding:10px 12px;margin:0"></p></div>
  </div>
 
  <div id="tab-snd" class="tools" hidden style="margin-top:0">
@@ -131,6 +132,7 @@ textarea{width:100%;min-height:150px;background:var(--bg);border:2px solid var(-
 const API='https://facerecogbackend-1p5y.onrender.com';
 // POST /recognize  multipart image (base64 string), session_id -> {recognized, name, role:'admin'|'user', token?, already_checked_in?}
 // POST /register   multipart name, images[], consent, class? (+Bearer when admin adds) -> 200 | 409 already registered
+// PATCH /admin/users/{id} json {role:'admin'|'user'}
 // GET  /admin/users -> {users:[{id,name,class?,created_at?}]} ; DELETE /admin/users/{id}
 // PATCH /admin/attendance/{id} json {verified:bool}  (records carry id, name, class?, timestamp, verified)
 // GET  /admin/attendance?user=&date=  (Bearer token) -> {records:[{id,name,class?,timestamp}]} or array
@@ -186,7 +188,7 @@ const norm=r=>{r=r&&typeof r==='object'?r:{};window.lastResp=r;
  const ok=flag!==undefined?!!flag&&flag!=='false':(good||!!name);
  return {...r,...d,name:name||'Friend',role:(r.is_admin??d.is_admin??u.is_admin??r.isAdmin??d.isAdmin)===true?'admin':String(r.role??d.role??u.role??'').toLowerCase(),token:r.token??d.token??r.access_token,
   already_checked_in:r.already_checked_in??d.already_checked_in??(st==='already_marked'||undefined),recognized:ok}};
-const register=(n,bs,consent,cls,tok)=>{const f=new FormData();f.append('name',n);f.append('consent',consent);if(cls)f.append('class',cls);bs.forEach((b,i)=>f.append('images',b,`face${i}.jpg`));return api('/register',{method:'POST',body:f,headers:tok?{Authorization:`Bearer ${tok}`}:undefined})};
+const register=(n,bs,consent,cls,tok,role)=>{const f=new FormData();f.append('name',n);f.append('consent',consent);if(cls)f.append('class',cls);if(role==='admin')f.append('role',role);bs.forEach((b,i)=>f.append('images',b,`face${i}.jpg`));return api('/register',{method:'POST',body:f,headers:tok?{Authorization:`Bearer ${tok}`}:undefined})};
 // ---- camera (live face preview shown in the circle) ----
 async function ensureCam(){
  if(!cam){
@@ -237,7 +239,7 @@ function success(r){
   celebrate(true);say(n,`Welcome, ${n}! Welcome home!`)}
  const ag=document.createElement('button');ag.className='btn';ag.textContent='🔊 Hear again';ag.onclick=()=>Voice.say(`Welcome, ${n}! Welcome home!`);P.appendChild(ag);
  if(admin){
-  const b=document.createElement('button');b.className='btn p';b.textContent='Open attendance dashboard';b.onclick=()=>openAdmin(r.token);P.appendChild(b);
+  const b=document.createElement('button');b.className='btn p';b.textContent='Open attendance dashboard';b.onclick=()=>openAdmin(r.token,r);P.appendChild(b);
   const c=document.createElement('button');c.className='btn';c.textContent='Back to scan';c.onclick=()=>scan();P.appendChild(c);
  }else timers.push(setTimeout(()=>scan(),dup?6000:9000));
 }
@@ -258,10 +260,10 @@ async function registerView(notFound){
  };
 }
 // ---- admin (only reachable after an admin face is recognised) ----
-let rowsCache=[],shown=[],usersCache=[],deb;
+let rowsCache=[],shown=[],usersCache=[],deb,me={};
 const H=()=>({Authorization:`Bearer ${token}`});
 const sessionMsg=e=>e.status===401||e.status===403?'Your staff session isn’t valid. Leave the staff area and scan your face again.':e.message;
-function openAdmin(t){token=t;begin();stopCam();P.innerHTML='';setNav(null);$('#kiosk').hidden=true;$('#admin').hidden=false;$('#exit').hidden=false;showTab('att')}
+function openAdmin(t,u){token=t;me={id:u?.id??u?.user_id,name:u?.name};begin();stopCam();P.innerHTML='';setNav(null);$('#kiosk').hidden=true;$('#admin').hidden=false;$('#exit').hidden=false;showTab('att')}
 function leaveAdmin(){token=null;closeAdd();$('#admin').hidden=true;$('#exit').hidden=true;$('#kiosk').hidden=false;scan()}
 function showTab(t){
  document.querySelectorAll('[data-tab]').forEach(b=>{const on=b.dataset.tab===t;b.classList.toggle('p',on);b.setAttribute('aria-selected',on)});
@@ -292,7 +294,7 @@ async function loadUsers(){
  catch(e){usersCache=[];$('#uinfo').className='hint err';$('#uinfo').textContent=sessionMsg(e)}}
 function renderUsers(){
  const q=$('#uq').value.trim().toLowerCase(),list=usersCache.filter(u=>u.name.toLowerCase().includes(q));
- $('#urows').innerHTML=list.map(u=>{const c=u.created_at||u.registered_at;return `<tr><td><span class="mini" style="background:${colOf(u.name)}">${esc(u.name[0])}</span>${esc(u.name)}</td><td>${esc(u.class||'—')}</td><td>${c?dateOf(c)[0]:'—'}</td><td><button class="btn c" data-del="${esc(u.id)}">Delete</button></td></tr>`}).join('');
+ $('#urows').innerHTML=list.map(u=>{const c=u.created_at||u.registered_at,isA=String(u.role||'').toLowerCase()==='admin'||u.is_admin===true,self=me.id!=null&&String(u.id)===String(me.id);return `<tr><td><span class="mini" style="background:${colOf(u.name)}">${esc(u.name[0])}</span>${esc(u.name)}</td><td>${esc(u.class||'—')}</td><td>${c?dateOf(c)[0]:'—'}</td><td><span class="status">${isA?'★ Admin':'User'}</span></td><td>${self?'<small>You (signed in)</small>':`<button class="btn" data-role="${esc(u.id)}" data-to="${isA?'user':'admin'}">${isA?'Make user':'Make admin'}</button> <button class="btn c" data-del="${esc(u.id)}">Delete</button>`}</td></tr>`}).join('');
  $('#uinfo').className='hint';$('#uinfo').textContent=list.length?'':'No users found.'}
 async function openAdd(){
  $('#addbox').hidden=false;$('#aerr').textContent='';$('#ago').disabled=true;
@@ -304,7 +306,7 @@ $('#af').onsubmit=async ev=>{ev.preventDefault();
  if(!name)return err('Please enter a name.');if(!$('#acn').checked)return err('A parent or guardian needs to agree first.');
  err('');$('#ago').disabled=true;$('#ago').textContent='Adding…';
  try{const shots=[];for(let i=0;i<3;i++){shots.push(await snap());await sleep(400)}
-  await register(name,shots,true,$('#ac').value.trim(),token);closeAdd();loadUsers()}
+  await register(name,shots,true,$('#ac').value.trim(),token,$('#ar').value);closeAdd();loadUsers()}
  catch(e){err(e.status===409?'This person is already registered.':sessionMsg(e))}
  finally{$('#ago').disabled=false;$('#ago').textContent='Capture and add'}};
 $('#uq').oninput=renderUsers;
@@ -315,6 +317,11 @@ document.addEventListener('click',async e=>{const t=e.target;
   const k=rowsCache.find(x=>String(x.id)===t.dataset.vf),to=t.dataset.to==='1';t.disabled=true;
   try{await api(`/admin/attendance/${encodeURIComponent(k.id)}`,{method:'PATCH',headers:{...H(),'Content-Type':'application/json'},body:JSON.stringify({verified:to})});k.verified=to;renderAtt()}
   catch(err){t.disabled=false;$('#info').className='hint err';$('#info').textContent=sessionMsg(err)}}
+ if(t.dataset?.role!==undefined){
+  const u=usersCache.find(x=>String(x.id)===t.dataset.role),to=t.dataset.to;
+  ask((to==='admin'?'Make admin: ':'Make regular user: ')+u.name+'?',`<p>${to==='admin'?'They will be able to see all attendance and manage users.':'They will no longer be able to open the dashboard.'}</p>`,async()=>{
+   try{await api(`/admin/users/${encodeURIComponent(u.id)}`,{method:'PATCH',headers:{...H(),'Content-Type':'application/json'},body:JSON.stringify({role:to})});u.role=to;if(u.is_admin!==undefined)u.is_admin=to==='admin';renderUsers()}
+   catch(err){$('#uinfo').className='hint err';$('#uinfo').textContent=sessionMsg(err)}})}
  if(t.dataset?.del!==undefined){
   const u=usersCache.find(x=>String(x.id)===t.dataset.del);
   ask('Delete '+u.name+'?',`<p>This removes <b>${esc(u.name)}</b> and their saved face data. They will need to register again to check in.</p>`,async()=>{
