@@ -86,12 +86,10 @@ textarea{width:100%;min-height:150px;background:var(--bg);border:2px solid var(-
   <div class="row" style="margin-bottom:10px">
    <input id="q" placeholder="Search name" aria-label="Search name">
    <input id="fd" type="date" aria-label="Date">
-   <select id="fs" aria-label="Status"><option value="">All statuses</option><option value="pending">Pending verification</option><option value="verified">Verified</option></select>
    <button class="btn" id="clr">Clear</button>
    <button class="btn p" id="csv">Export CSV</button>
   </div>
-  <div class="tw"><table><thead><tr><th>Child</th><th>Class</th><th>Date</th><th>Time</th><th>Status</th><th>Action</th></tr></thead><tbody id="rows"></tbody></table><p class="hint" id="info" style="padding:10px 12px;margin:0"></p></div>
-  <p class="hint">Verify confirms a face check-in was correct. Undo moves it back to pending.</p>
+  <div class="tw"><table><thead><tr><th>Child</th><th>Class</th><th>Date</th><th>Time</th></tr></thead><tbody id="rows"></tbody></table><p class="hint" id="info" style="padding:10px 12px;margin:0"></p></div>
  </div>
 
  <div id="tab-usr" hidden>
@@ -134,7 +132,6 @@ const API='https://facerecogbackend-1p5y.onrender.com';
 // POST /register   multipart name, images[], consent, class? (+Bearer when admin adds) -> 200 | 409 already registered
 // PATCH /admin/users/{id} json {role:'admin'|'user'}
 // GET  /admin/users -> {users:[{id,name,class?,created_at?}]} ; DELETE /admin/users/{id}
-// PATCH /admin/attendance/{id} json {verified:bool}  (records carry id, name, class?, timestamp, verified)
 // GET  /admin/attendance?user=&date=  (Bearer token) -> {records:[{id,name,class?,timestamp}]} or array
 // ==============================================
 const $=s=>document.querySelector(s);
@@ -279,12 +276,9 @@ async function loadAtt(){
  try{const r=await api(`/admin/attendance?${p}`,{headers:H()});rowsCache=Array.isArray(r)?r:r.records||[];renderAtt()}
  catch(e){rowsCache=[];shown=[];$('#info').className='hint err';$('#info').textContent=sessionMsg(e)}}
 function renderAtt(){
- const s=$('#fs').value;shown=rowsCache.filter(k=>!s||(s==='verified')===!!k.verified);
- const v=rowsCache.filter(k=>k.verified).length;
- $('#cards').innerHTML=`<div><b>${rowsCache.length}</b>Check-ins</div><div><b>${v}</b>Verified</div><div><b>${rowsCache.length-v}</b>Pending</div>`;
- $('#rows').innerHTML=shown.map(k=>{const [d,t]=dateOf(k.timestamp);return `<tr><td><span class="mini" style="background:${colOf(k.name)}">${esc(k.name[0])}</span>${esc(k.name)}</td><td>${esc(k.class||'—')}</td><td>${d}</td><td>${t}</td>
-  <td><span class="status">${k.verified?'✔ Verified':'○ Pending'}</span></td>
-  <td>${k.verified?`<button class="btn" data-vf="${esc(k.id)}" data-to="0">Undo</button>`:`<button class="btn p" data-vf="${esc(k.id)}" data-to="1">Verify</button>`}</td></tr>`}).join('');
+ shown=rowsCache;
+ $('#cards').innerHTML=`<div><b>${rowsCache.length}</b>Check-ins</div><div><b>${new Set(rowsCache.map(k=>k.name)).size}</b>Different children</div>`;
+ $('#rows').innerHTML=shown.map(k=>{const [d,t]=dateOf(k.timestamp);return `<tr><td><span class="mini" style="background:${colOf(k.name)}">${esc(k.name[0])}</span>${esc(k.name)}</td><td>${esc(k.class||'—')}</td><td>${d}</td><td>${t}</td></tr>`}).join('');
  $('#info').className='hint';$('#info').textContent=shown.length?'':'No check-ins match these filters.'}
 
 // users
@@ -313,10 +307,6 @@ $('#uq').oninput=renderUsers;
 
 // row actions: verify / undo / delete
 document.addEventListener('click',async e=>{const t=e.target;
- if(t.dataset?.vf!==undefined){
-  const k=rowsCache.find(x=>String(x.id)===t.dataset.vf),to=t.dataset.to==='1';t.disabled=true;
-  try{await api(`/admin/attendance/${encodeURIComponent(k.id)}`,{method:'PATCH',headers:{...H(),'Content-Type':'application/json'},body:JSON.stringify({verified:to})});k.verified=to;renderAtt()}
-  catch(err){t.disabled=false;$('#info').className='hint err';$('#info').textContent=sessionMsg(err)}}
  if(t.dataset?.role!==undefined){
   const u=usersCache.find(x=>String(x.id)===t.dataset.role),to=t.dataset.to;
   ask((to==='admin'?'Make admin: ':'Make regular user: ')+u.name+'?',`<p>${to==='admin'?'They will be able to see all attendance and manage users.':'They will no longer be able to open the dashboard.'}</p>`,async()=>{
@@ -330,12 +320,11 @@ document.addEventListener('click',async e=>{const t=e.target;
 
 // filters + CSV
 ['q','fd'].forEach(i=>$('#'+i).oninput=()=>{clearTimeout(deb);deb=setTimeout(loadAtt,400)});
-$('#fs').onchange=renderAtt;
-$('#clr').onclick=()=>{$('#q').value='';$('#fd').value='';$('#fs').value='';loadAtt()};
+$('#clr').onclick=()=>{$('#q').value='';$('#fd').value='';loadAtt()};
 const dlg=$('#dlg');
 function ask(title,body,cb){$('#dt').textContent=title;$('#db').innerHTML=body;dlg.showModal();$('#df').onsubmit=e=>{if(e.submitter&&e.submitter.value==='ok')cb()}}
 const safe=v=>{v=String(v);if(/^[=+\-@\t\r]/.test(v))v="'"+v;return '"'+v.replace(/"/g,'""')+'"'};
-$('#csv').onclick=()=>{const rows=[['Name','Class','Date','Time','Status'],...shown.map(k=>{const [d,t]=dateOf(k.timestamp);return[k.name,k.class||'',d,t,k.verified?'Verified':'Pending']})];
+$('#csv').onclick=()=>{const rows=[['Name','Class','Date','Time'],...shown.map(k=>{const [d,t]=dateOf(k.timestamp);return[k.name,k.class||'',d,t]})];
  ask('CSV export (copy)',`<textarea readonly>${esc(rows.map(r=>r.map(safe).join(',')).join('\n'))}</textarea><p class="hint">Cells starting with = + - @ are neutralised against spreadsheet formula injection. No biometric data is included.</p>`,()=>{})};
 $('#exit').onclick=leaveAdmin;
 
