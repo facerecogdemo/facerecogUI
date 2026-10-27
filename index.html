@@ -128,7 +128,7 @@ textarea{width:100%;min-height:150px;background:var(--bg);border:2px solid var(-
 <dialog id="dlg"><form method="dialog" id="df"><h2 id="dt"></h2><div id="db"></div><div class="row" style="margin-top:12px"><button class="btn p" value="ok" id="dok">Confirm</button><button class="btn" value="x">Cancel</button></div></form></dialog>
 <script>
 // ===== CONFIG: point this at your backend =====
-const API='http://localhost:8000';
+const API='https://facerecogbackend-1p5y.onrender.com';
 // POST /recognize  multipart image -> {recognized, name, role:'admin'|'user', token?, already_checked_in?}
 // POST /register   multipart name, images[], consent, class? (+Bearer when admin adds) -> 200 | 409 already registered
 // GET  /admin/users -> {users:[{id,name,class?,created_at?}]} ; DELETE /admin/users/{id}
