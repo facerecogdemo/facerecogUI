@@ -184,7 +184,7 @@ const norm=r=>{r=r&&typeof r==='object'?r:{};window.lastResp=r;
  const st=String(r.status??d.status??'').toLowerCase();
  const good=['recognized','success','matched','ok','marked','attendance_marked','already_marked'].includes(st);
  const ok=flag!==undefined?!!flag&&flag!=='false':(good||!!name);
- return {...r,...d,name:name||'Friend',role:r.role??d.role??u.role,token:r.token??d.token??r.access_token,
+ return {...r,...d,name:name||'Friend',role:(r.is_admin??d.is_admin??u.is_admin??r.isAdmin??d.isAdmin)===true?'admin':String(r.role??d.role??u.role??'').toLowerCase(),token:r.token??d.token??r.access_token,
   already_checked_in:r.already_checked_in??d.already_checked_in??(st==='already_marked'||undefined),recognized:ok}};
 const register=(n,bs,consent,cls,tok)=>{const f=new FormData();f.append('name',n);f.append('consent',consent);if(cls)f.append('class',cls);bs.forEach((b,i)=>f.append('images',b,`face${i}.jpg`));return api('/register',{method:'POST',body:f,headers:tok?{Authorization:`Bearer ${tok}`}:undefined})};
 // ---- camera (live face preview shown in the circle) ----
