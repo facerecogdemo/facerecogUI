@@ -130,7 +130,7 @@ textarea{width:100%;min-height:150px;background:var(--bg);border:2px solid var(-
 const API='https://facerecogbackend-1p5y.onrender.com';
 // POST /recognize  multipart image (base64 string), session_id -> {recognized, name, role:'admin'|'user', token?, already_checked_in?}
 // POST /register   multipart name, images[], consent, class? (+Bearer when admin adds) -> 200 | 409 already registered
-// PATCH /admin/users/{id} json {role:'admin'|'user'}
+// PATCH /admin/users/{id}/role json {role:'admin'|'user'}
 // GET  /admin/users -> {users:[{id,name,class?,created_at?}]} ; DELETE /admin/users/{id}
 // GET  /admin/attendance?user=&date=  (Bearer token) -> {records:[{id,name,class?,timestamp}]} or array
 // ==============================================
@@ -310,7 +310,7 @@ document.addEventListener('click',async e=>{const t=e.target;
  if(t.dataset?.role!==undefined){
   const u=usersCache.find(x=>String(x.id)===t.dataset.role),to=t.dataset.to;
   ask((to==='admin'?'Make admin: ':'Make regular user: ')+u.name+'?',`<p>${to==='admin'?'They will be able to see all attendance and manage users.':'They will no longer be able to open the dashboard.'}</p>`,async()=>{
-   try{await api(`/admin/users/${encodeURIComponent(u.id)}`,{method:'PATCH',headers:{...H(),'Content-Type':'application/json'},body:JSON.stringify({role:to})});u.role=to;if(u.is_admin!==undefined)u.is_admin=to==='admin';renderUsers()}
+   try{await api(`/admin/users/${encodeURIComponent(u.id)}/role`,{method:'PATCH',headers:{...H(),'Content-Type':'application/json'},body:JSON.stringify({role:to})});u.role=to;if(u.is_admin!==undefined)u.is_admin=to==='admin';renderUsers()}
    catch(err){$('#uinfo').className='hint err';$('#uinfo').textContent=sessionMsg(err)}})}
  if(t.dataset?.del!==undefined){
   const u=usersCache.find(x=>String(x.id)===t.dataset.del);
