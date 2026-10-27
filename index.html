@@ -171,7 +171,21 @@ const IMAGE_AS='file';
 const b64=b=>new Promise(r=>{const f=new FileReader();f.onload=()=>r(f.result.split(',')[1]);f.readAsDataURL(b)});
 const putImg=async(f,k,b)=>{if(IMAGE_AS==='file')f.append(k,b,'face.jpg');else f.append(k,await b64(b))};
 const newId=()=>crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random().toString(36).slice(2);
-const recognize=async(b,sid)=>{const f=new FormData();await putImg(f,'image',b);f.append('session_id',sid);return api('/recognize',{method:'POST',body:f})};
+const recognize=async(b,sid)=>{const f=new FormData();await putImg(f,'image',b);f.append('session_id',sid);const r=await api('/recognize',{method:'POST',body:f});console.log('recognize response',r);return norm(r)};
+// Tolerant reader for the /recognize response (flat or nested in data/result/user)
+const DEBUG=true; // shows the raw server reply on the register screen; set false when done testing
+const pick=(o,ks)=>{for(const k of ks){const v=o?.[k];if(v!=null&&v!=='')return v}};
+const NAMES=['name','user_name','username','full_name','person_name'];
+const norm=r=>{r=r&&typeof r==='object'?r:{};window.lastResp=r;
+ const d=(r.data&&typeof r.data==='object'&&r.data)||(r.result&&typeof r.result==='object'&&r.result)||{};
+ const u=(r.user&&typeof r.user==='object'&&r.user)||(d.user&&typeof d.user==='object'&&d.user)||{};
+ const name=pick(r,NAMES)??pick(d,NAMES)??pick(u,NAMES);
+ const flag=[r,d].map(x=>x.recognized??x.matched??x.match??x.is_recognized??x.found??x.identified??x.is_match).find(v=>v!==undefined);
+ const st=String(r.status??d.status??'').toLowerCase();
+ const good=['recognized','success','matched','ok','marked','attendance_marked','already_marked'].includes(st);
+ const ok=flag!==undefined?!!flag&&flag!=='false':(good||!!name);
+ return {...r,...d,name:name||'Friend',role:r.role??d.role??u.role,token:r.token??d.token??r.access_token,
+  already_checked_in:r.already_checked_in??d.already_checked_in??(st==='already_marked'||undefined),recognized:ok}};
 const register=(n,bs,consent,cls,tok)=>{const f=new FormData();f.append('name',n);f.append('consent',consent);if(cls)f.append('class',cls);bs.forEach((b,i)=>f.append('images',b,`face${i}.jpg`));return api('/register',{method:'POST',body:f,headers:tok?{Authorization:`Bearer ${tok}`}:undefined})};
 // ---- camera (live face preview shown in the circle) ----
 async function ensureCam(){
@@ -182,7 +196,10 @@ async function ensureCam(){
  }
  const v=$('#cam');if(v){v.srcObject=cam;await v.play()}}
 function stopCam(){cam?.getTracks().forEach(t=>t.stop());cam=null}
-const snap=()=>new Promise(r=>{const v=$('#cam'),c=document.createElement('canvas');c.width=v.videoWidth;c.height=v.videoHeight;c.getContext('2d').drawImage(v,0,0);c.toBlob(r,'image/jpeg',.9)});
+const snap=async()=>{const v=$('#cam');for(let i=0;i<20&&(!v||!v.videoWidth);i++)await sleep(100);
+ if(!v||!v.videoWidth)throw new Error('The camera isn’t ready yet. Please try again.');
+ const c=document.createElement('canvas');c.width=v.videoWidth;c.height=v.videoHeight;c.getContext('2d').drawImage(v,0,0);
+ const b=await new Promise(r=>c.toBlob(r,'image/jpeg',.9));if(!b)throw new Error('Could not capture a photo.');return b};
 // ---- kiosk ----
 const P=$('#panel');
 const em=e=>{const x=$('#em');if(x)x.textContent=e};
@@ -226,7 +243,7 @@ function success(r){
 }
 async function registerView(notFound){
  const my=begin();busy=true;setNav('Scan face',()=>scan());
- P.innerHTML=`<h1>Join the <span>adventure!</span></h1><p>${notFound?'We couldn’t find you yet. Let’s register!':'Tell us your name, then look at the camera.'}</p><div class="guide face" id="em"><video id="cam" playsinline muted aria-label="Camera preview"></video></div>
+ P.innerHTML=`<h1>Join the <span>adventure!</span></h1><p>${notFound?'We couldn’t find you yet. Let’s register!':'Tell us your name, then look at the camera.'}</p>${notFound&&DEBUG&&window.lastResp?`<pre class="hint" style="text-align:left;white-space:pre-wrap;word-break:break-all;max-width:100%">Server said: ${esc(JSON.stringify(window.lastResp))}</pre>`:''}<div class="guide face" id="em"><video id="cam" playsinline muted aria-label="Camera preview"></video></div>
   <form id="rf" style="display:grid;gap:10px;justify-items:center"><label>Child’s name<br><input id="rn" autocomplete="off" style="width:100%"></label>
   <label style="font-size:.9rem"><input type="checkbox" id="rc"> A parent or guardian agrees to face check-in</label>
   <p class="hint err" id="rerr" role="alert" style="margin:0"></p><button class="btn p" id="rgo" disabled>Capture and register</button></form>`;
